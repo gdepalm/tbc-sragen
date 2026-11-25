@@ -1,0 +1,24 @@
+# Berkas yang tidak perlu dikirim ke server Vercel (mempercepat unggah saat deploy,
+# tidak memengaruhi isi aplikasi). frontend/ dan app/data/ JANGAN dimasukkan ke sini.
+.venv/
+venv/
+__pycache__/
+*.pyc
+# hanya folder data/ di akar proyek (tanpa garis miring di depan, pola ini juga
+# mencocokkan app/data/ yang justru WAJIB ikut dikirim)
+/data/
+tests/
+scripts/
+.vscode/
+.git/
+.DS_Store
+_uji_db.py
+.req_local.txt
+*.db
+*.db-shm
+*.db-wal
+# berkas rahasia/pengaturan lokal tidak perlu ikut dikirim ke server
+.env
+.env.local
+.env.*.local
+.vercel/

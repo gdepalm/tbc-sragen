@@ -2,17 +2,18 @@
 import hashlib
 import logging
 import math
+import os
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from . import config
 from .api_kontak import router as router_kontak
@@ -25,14 +26,27 @@ from .services import rekap as R, unggah
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
+_GALAT_MULAI: Optional[str] = None
+
+
 def _mulai():
-    init_db()
-    # batch yang terputus karena server mati saat diproses ditandai gagal agar tidak "menggantung"
-    from .db import SessionLocal
-    with SessionLocal() as db:
-        for b in db.scalars(select(Batch).where(Batch.status.in_(("diproses", "menunggu")))):
-            b.status, b.pesan = "gagal", "Pengolahan terhenti karena server dimulai ulang. Silakan unggah ulang."
-        db.commit()
+    """Siapkan database saat layanan menyala.
+
+    Kegagalan di sini (mis. DATABASE_URL salah) TIDAK menghentikan seluruh layanan:
+    galatnya disimpan untuk ditampilkan pada /api/kesehatan supaya mudah didiagnosis.
+    """
+    global _GALAT_MULAI
+    try:
+        init_db()
+        from .db import SessionLocal
+        with SessionLocal() as db:
+            for b in db.scalars(select(Batch).where(Batch.status.in_(("diproses", "menunggu")))):
+                b.status, b.pesan = "gagal", "Pengolahan terhenti karena server dimulai ulang. Silakan unggah ulang."
+            db.commit()
+        _GALAT_MULAI = None
+    except Exception as e:  # noqa: BLE001 - dilaporkan lewat /api/kesehatan, bukan mematikan layanan
+        _GALAT_MULAI = f"{type(e).__name__}: {e}"
+        logging.getLogger("tbc").exception("Gagal menyiapkan database saat mulai")
 
 
 @asynccontextmanager
@@ -85,8 +99,35 @@ def _x(x: Berkas):
 
 
 @app.get("/api/kesehatan")
-def kesehatan():
-    return {"status": "ok"}
+def kesehatan(request: Request, db=Depends(get_db)):
+    """Pemeriksaan kondisi layanan: sambungan database, halaman depan, dan folder unggahan.
+
+    Dipakai untuk memastikan hasil pemasangan di server berjalan wajar. Tidak menampilkan
+    isi kredensial, hanya jenis database yang dipakai.
+    """
+    info = {
+        "status": "ok",
+        "waktu": datetime.now().isoformat(timespec="seconds"),
+        "alamat_diminta": request.url.path,
+        "halaman_depan": _fe is not None,
+        "folder_halaman": str(_fe) if _fe is not None else None,
+        "folder_unggahan": str(config.UPLOAD_DIR),
+        "jenis_database": "postgresql" if config.DATABASE_URL.startswith(("postgresql", "postgres")) else "sqlite",
+        "database_terhubung": False,
+        "jumlah_batch": None,
+        "pesan": None,
+    }
+    try:
+        db.execute(text("select 1"))
+        info["jumlah_batch"] = db.scalar(select(func.count()).select_from(Batch))
+        info["database_terhubung"] = True
+    except Exception as e:  # noqa: BLE001
+        info["status"] = "bermasalah"
+        info["pesan"] = f"{type(e).__name__}: {e}"[:300]
+    if _GALAT_MULAI:
+        info["status"] = "bermasalah"
+        info["pesan"] = info["pesan"] or _GALAT_MULAI
+    return info
 
 
 @app.post("/api/upload")
@@ -231,9 +272,52 @@ def info_database(db=Depends(get_db)):
                        fakta=n(Fakta), faskes=n(Faskes), target=n(Target), riwayat_lama=n(RekapHistoris), per_jenis=per_jenis))
 
 
-_fe = next(
-    (p for p in [Path(__file__).resolve().parent.parent / "frontend", Path.cwd() / "frontend"] if (p / "index.html").exists()),
-    None,
-)
+def _cari_folder_halaman():
+    """Temukan folder frontend (berisi index.html).
+
+    Lokasi berkas berbeda antara dijalankan lokal (folder proyek) dan di server serverless
+    (berkas dikemas ke folder fungsi), jadi beberapa kandidat dicoba berurutan sebelum
+    pencarian cadangan yang lebih dangkal.
+    """
+    kandidat = []
+    diminta = os.getenv("FRONTEND_DIR", "").strip()
+    if diminta:
+        kandidat.append(Path(diminta))
+    akar = [Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent,
+            Path.cwd(), config.BASE, Path("/var/task")]
+    for a in akar:
+        for nama in ("frontend", "public", "static", "api/frontend", "api/public"):
+            kandidat.append(a / nama)
+    for k in kandidat:
+        try:
+            if (k / "index.html").is_file():
+                return k.resolve()
+        except OSError:
+            continue
+    for a in akar:   # cadangan: cari index.html maksimal 3 tingkat di bawah tiap akar
+        for pola in ("*/index.html", "*/*/index.html", "*/*/*/index.html"):
+            try:
+                for f in a.glob(pola):
+                    if f.parent.name in ("frontend", "public", "static"):
+                        return f.parent.resolve()
+            except OSError:
+                continue
+    return None
+
+
+_fe = _cari_folder_halaman()
 if _fe is not None:
-    app.mount("/", StaticFiles(directory=_fe, html=True), name="frontend")
+    _folder_halaman = _fe
+
+    @app.get("/", include_in_schema=False)
+    def _halaman_depan():
+        """Halaman utama dashboard (bukan JSON) supaya alamat utama langsung menampilkan UI."""
+        return FileResponse(_folder_halaman / "index.html", media_type="text/html")
+
+    # seluruh berkas frontend (gaya, skrip, gambar) dilayani dari folder yang sama
+    app.mount("/", StaticFiles(directory=str(_folder_halaman), html=True), name="frontend")
+else:
+    logging.getLogger("tbc").warning(
+        "Folder frontend tidak ditemukan; halaman utama tidak akan tampil. "
+        "Set variabel lingkungan FRONTEND_DIR bila berkas berada di lokasi lain."
+    )

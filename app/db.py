@@ -13,7 +13,10 @@ _sqlite = config.DATABASE_URL.startswith("sqlite")
 if _sqlite:   # pastikan folder database ada (mis. data/) supaya tidak error saat pertama kali dijalankan
     _p = config.DATABASE_URL.split("sqlite:///", 1)[-1]
     if _p and _p != ":memory:":
-        Path(_p if Path(_p).is_absolute() else config.BASE / _p).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            Path(_p if Path(_p).is_absolute() else config.BASE / _p).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:   # mis. folder hanya-baca (serverless): biarkan, errornya jelas saat koneksi
+            print(f"[peringatan] folder database tidak bisa dibuat: {e}")
 
 if _sqlite:
     engine = create_engine(
@@ -22,9 +25,15 @@ if _sqlite:
         connect_args={"check_same_thread": False, "timeout": 60},
     )
 else:
+    import re
+
     import psycopg
 
-    _raw_url = config.DATABASE_URL.replace("postgresql+psycopg://", "postgresql://", 1)
+    # Penyedia hosting menuliskan URL database dengan beragam skema: postgres://, postgresql://,
+    # postgresql+psycopg://, postgresql+psycopg2://. Pustaka psycopg (v3) hanya mengenali
+    # "postgresql://", sehingga akhiran nama driver harus dibuang lebih dulu — tanpa ini muncul
+    # galat 'missing "=" after "postgresql+psycopg2://..." in connection info string'.
+    _raw_url = re.sub(r"^(?:postgresql|postgres)(?:\+\w+)?://", "postgresql://", config.DATABASE_URL)
     engine = create_engine(
         "postgresql+psycopg://",
         poolclass=NullPool,
@@ -58,6 +67,12 @@ def get_db():
 
 
 def _baca_csv():
+    if not CSV_TARGET.exists():
+        # Berkas bawaan tidak ikut terkemas saat dipasang di server (mis. salah atur berkas yang
+        # dikecualikan). Bukan masalah bila tabel target sudah berisi data, jadi jangan sampai
+        # mematikan seluruh penyiapan database.
+        print(f"[peringatan] berkas target bawaan tidak ditemukan: {CSV_TARGET}")
+        return []
     with open(CSV_TARGET, encoding="utf-8") as f:
         return [dict(key=kunci_faskes(r["puskesmas"]), nama="Puskesmas " + r["puskesmas"],
                      terduga_tahunan=float(r["target_terduga_tahunan"]), penemuan_tahunan=float(r["target_penemuan_tahunan"]),

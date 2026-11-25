@@ -4,3 +4,4 @@ data/upload/
 __pycache__/
 .venv/
 .vercel
+.env*

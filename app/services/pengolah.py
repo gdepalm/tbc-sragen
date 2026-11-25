@@ -19,7 +19,16 @@ antrean = ThreadPoolExecutor(max_workers=1)  # satu pengolahan pada satu waktu a
 
 
 def kirim(batch_id: int):
-    antrean.submit(proses, batch_id)
+    """Antre pengolahan satu batch.
+
+    Di serverless (Vercel) proses dijalankan langsung di dalam permintaan yang sedang
+    berjalan: setelah balasan dikirim, utas latar dibekukan sehingga antrean tidak
+    pernah selesai dan batch akan tampak 'menggantung'.
+    """
+    if config.PROSES_SINKRON:
+        proses(batch_id)
+    else:
+        antrean.submit(proses, batch_id)
 
 
 def _ubah(batch_id, **kw):

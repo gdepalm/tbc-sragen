@@ -97,3 +97,42 @@ Untuk mulai dari database kosong: tutup website, hapus file `data\tbc.db`, lalu 
 - Database hanya menyimpan **angka agregat** (per tanggal, fasyankes, indikator). Nama, NIK, alamat, telepon **tidak disimpan**.
 - File Excel asli **dihapus otomatis** setelah diolah (`SIMPAN_BERKAS_ASLI=false` di `.env`).
 - Jangan bagikan folder `data\upload` dari versi lama: di sana masih ada file Excel berisi data pasien.
+
+---
+
+## G. Memasang (deploy) ke Vercel
+
+Alamat produksi: **https://tbc-sragen-rosy.vercel.app** (project Vercel `tanzhydras-projects/tbc-sragen`).
+Seluruh permintaan — halaman depan maupun API — ditangani satu fungsi serverless FastAPI.
+
+**Berkas yang mengatur pemasangan**
+
+| Berkas | Kegunaan |
+|---|---|
+| `vercel.json` | Mengarahkan seluruh permintaan ke `api/index.py`; mengemas `frontend/**` dan `app/data/**` ke dalam fungsi; batas waktu 60 detik; region `sin1` (Singapura — paling dekat dengan pengguna di Indonesia dan server database). |
+| `api/index.py` | Titik masuk fungsi serverless. Vercel mengganti path permintaan menjadi lokasi berkas fungsi, sehingga path asli dititipkan lewat parameter kueri `_vc_path` lalu dipulihkan sebelum diteruskan ke FastAPI. Bila pemulihan gagal, muncul JSON diagnostik, bukan pesan "Not Found". |
+| `.python-version` | Versi Python yang dipakai server (3.12, sama seperti anjuran di bagian A). |
+| `.vercelignore` | Berkas yang tidak perlu dikirim ke server. Catatan penting: tulis `/data/` (folder `data` di akar saja). Bila ditulis `data/`, pola itu juga mengecualikan `app/data/` sehingga berkas target puskesmas tidak ikut terkemas dan penyiapan database gagal. |
+| `requirements.txt` | Pustaka yang dipasang otomatis saat pemasangan. Baris `uvloop` hanya bisa dipasang di Linux/macOS (di Windows gagal), jadi untuk mencoba di komputer Windows pasang pustaka lain lebih dulu. |
+
+**Variabel lingkungan pada project Vercel** (Settings → Environment Variables)
+
+| Nama | Isi | Lingkungan |
+|---|---|---|
+| `DATABASE_URL` | Alamat sambungan PostgreSQL Supabase, bentuk `postgresql://postgres.<ref>:<sandi>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres` | Production, Preview, Development |
+| `MAX_UPLOAD_MB` | `4` — batas badan permintaan Vercel 4,5 MB, sehingga batas kecil ini membuat pesan galat lebih jelas daripada galat dari platform | Production, Preview |
+
+**Perintah memasang ulang**
+```
+vercel env add DATABASE_URL --value "postgresql://..." -e production,preview,development
+vercel --prod --yes
+```
+
+**Pemeriksaan setelah pemasangan:** buka `/api/kesehatan`. Balasannya memuat `status`, `database_terhubung`, `halaman_depan`, `folder_halaman`, dan `folder_unggahan` — cukup untuk memastikan sambungan database dan halaman depan berjalan tanpa perlu masuk ke dashboard Vercel.
+
+**Batasan Vercel yang perlu diketahui**
+- Ukuran permintaan paling besar 4,5 MB. Berkas Excel SITB bulanan jauh di bawah batas ini.
+- Berkas unggahan sementara disimpan di `/tmp` (satu-satunya folder yang bisa ditulis di server). Berkas Excel asli tetap dihapus setelah diolah karena `SIMPAN_BERKAS_ASLI=false`.
+- Di server, pengolahan berkas berjalan di dalam permintaan yang sama (bukan utas latar), karena utas latar dibekukan begitu balasan dikirim. Berkas yang sangat besar sebaiknya diolah di server sendiri dengan `JALANKAN.bat`.
+- Masing-masing instance server punya `/tmp` sendiri; berkas yang belum selesai diolah ditandai gagal saat layanan menyala kembali.
+
