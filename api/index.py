@@ -1,19 +1,3 @@
-cat << 'EOF' > vercel.json
-{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/index.py": {
-      "includeFiles": "frontend/**",
-      "maxDuration": 60
-    }
-  },
-  "routes": [
-    { "src": "/(.*)", "dest": "/api/index.py?_vc_path=/$1" }
-  ]
-}
-EOF
-
-cat << 'EOF' > api/index.py
 from urllib.parse import parse_qs, unquote, urlencode
 from app.main import app as _fastapi_app
 
@@ -32,6 +16,3 @@ async def app(scope, receive, send):
                 "query_string": clean_qs,
             }
     await _fastapi_app(scope, receive, send)
-EOF
-
-git add .gitignore vercel.json api/index.py && git commit -m "Pass and restore original route path via query parameter" && git push origin main
