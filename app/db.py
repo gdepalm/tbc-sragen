@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from . import config
 from .models import Basis, Pengaturan, Target
@@ -13,13 +14,15 @@ if _sqlite:   # pastikan folder database ada (mis. data/) supaya tidak error saa
     _p = config.DATABASE_URL.split("sqlite:///", 1)[-1]
     if _p and _p != ":memory:":
         Path(_p if Path(_p).is_absolute() else config.BASE / _p).parent.mkdir(parents=True, exist_ok=True)
+_psycopg3 = config.DATABASE_URL.startswith("postgresql+psycopg://")
 engine = create_engine(
     config.DATABASE_URL,
     pool_pre_ping=True,
+    poolclass=NullPool if _psycopg3 else None,
     connect_args=(
         {"check_same_thread": False, "timeout": 60}
         if _sqlite
-        else ({"prepare_threshold": None} if config.DATABASE_URL.startswith("postgresql+psycopg://") else {})
+        else ({"prepare_threshold": None} if _psycopg3 else {})
     ),
 )
 if _sqlite:
