@@ -231,6 +231,9 @@ def info_database(db=Depends(get_db)):
                        fakta=n(Fakta), faskes=n(Faskes), target=n(Target), riwayat_lama=n(RekapHistoris), per_jenis=per_jenis))
 
 
-_fe = Path(__file__).resolve().parent.parent / "frontend"
-if (_fe / "index.html").exists():
+_fe = next(
+    (p for p in [Path(__file__).resolve().parent.parent / "frontend", Path.cwd() / "frontend"] if (p / "index.html").exists()),
+    None,
+)
+if _fe is not None:
     app.mount("/", StaticFiles(directory=_fe, html=True), name="frontend")
