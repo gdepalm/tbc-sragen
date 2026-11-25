@@ -13,8 +13,15 @@ if _sqlite:   # pastikan folder database ada (mis. data/) supaya tidak error saa
     _p = config.DATABASE_URL.split("sqlite:///", 1)[-1]
     if _p and _p != ":memory:":
         Path(_p if Path(_p).is_absolute() else config.BASE / _p).parent.mkdir(parents=True, exist_ok=True)
-engine = create_engine(config.DATABASE_URL, pool_pre_ping=True,
-                       connect_args={"check_same_thread": False, "timeout": 60} if _sqlite else {})
+engine = create_engine(
+    config.DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args=(
+        {"check_same_thread": False, "timeout": 60}
+        if _sqlite
+        else ({"prepare_threshold": None} if config.DATABASE_URL.startswith("postgresql+psycopg://") else {})
+    ),
+)
 if _sqlite:
     @event.listens_for(engine, "connect")
     def _pragma(conn, _):
