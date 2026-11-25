@@ -13,10 +13,14 @@ except ImportError:  # python-dotenv tidak wajib
 
 def _db_url():
     url = os.getenv("DATABASE_URL", "").strip() or f"sqlite:///{(BASE / 'data' / 'tbc.db').as_posix()}"
-    if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql+psycopg2://"):
+        pass
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
     elif url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
     # alamat sqlite relatif (mis. sqlite:///data/tbc.db) selalu dihitung dari folder project,
     # sehingga tidak error walaupun terminal dibuka di folder lain
     if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
