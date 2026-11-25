@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from . import config
 from .models import Basis, Pengaturan, Target
@@ -13,12 +14,30 @@ if _sqlite:   # pastikan folder database ada (mis. data/) supaya tidak error saa
     _p = config.DATABASE_URL.split("sqlite:///", 1)[-1]
     if _p and _p != ":memory:":
         Path(_p if Path(_p).is_absolute() else config.BASE / _p).parent.mkdir(parents=True, exist_ok=True)
+
 _psycopg3 = config.DATABASE_URL.startswith("postgresql+psycopg://")
-engine = create_engine(
-    config.DATABASE_URL,
-    pool_pre_ping=True,
-    connect_args={"check_same_thread": False, "timeout": 60} if _sqlite else {},
-)
+
+if _sqlite:
+    engine = create_engine(
+        config.DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"check_same_thread": False, "timeout": 60},
+    )
+elif _psycopg3:
+    import psycopg
+
+    _raw_url = config.DATABASE_URL.replace("postgresql+psycopg://", "postgresql://", 1)
+    engine = create_engine(
+        "postgresql+psycopg://",
+        poolclass=NullPool,
+        creator=lambda: psycopg.connect(_raw_url, prepare_threshold=None),
+    )
+else:
+    engine = create_engine(
+        config.DATABASE_URL,
+        poolclass=NullPool,
+    )
+
 if _sqlite:
     @event.listens_for(engine, "connect")
     def _pragma(conn, _):
